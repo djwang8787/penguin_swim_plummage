@@ -125,7 +125,7 @@ behaviour.data = new.data %>%
 
 behav.data = behaviour.data %>%
   group_by(Species) %>%
-  dplyr::summarise(Preening = sum(Behaviour == "Preening"))
+  dplyr::summarise(Preening = sum(Behaviours == "Preening"))
 
 merged.data = cbind(loc.data, behav.data$Preening)
 merged.data$Preening = merged.data$`behav.data$Preening`
@@ -156,7 +156,7 @@ names(behaviour.data) # take Species, Focal.Name, Behaviours, Month, DateTime,
 bl2 = bl  %>%
   rename(Focal.Name = SUBJECT,
          Behaviours = Behaviour) %>%
-  mutate(Year)
+  mutate(Year = lubridate::year(Date)) %>%
   select(Focal.Name, Behaviours, Species, Month, Date)
 
 behav.d2 = behaviour.data %>%
@@ -260,7 +260,7 @@ model.sel(bcs.m0, bcs.m1, bcs.m2, bcs.m3, bcs.m4, bcs.m5)
 bcs.m3
 summary(bcs.m3)
 
-bcs.m0 = bcs %>% filter(Species %in% c("King penguin", "Northen Rockhopper penguin")) %>%
+ bcs.m0 = bcs %>% filter(Species %in% c("King penguin", "Northen Rockhopper penguin")) %>%
   lmer(Weight~1 + (1|Name),
               data = .)
 
