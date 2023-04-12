@@ -346,56 +346,115 @@ fish = melt(fish, variable.name = 'Focal.Name', value.name = "Consumed", id.vars
                 Success = ifelse(Focal.Name %in% c("PIERRE", "GLORIA", "HANSEL", "PATRICIA", "BRIX",
                                                   "AIDAN", "ARLO"), "Success", "Fail"),
                 Week = week(Date),
-                Month = month(Date, label = TRUE))
-
-fish = fish %>%
+                Month = month(Date, label = TRUE)) %>%
   dplyr::mutate(Month = factor(Month, levels = c("Nov", "Dec", "Jan", "Feb", "Mar")))
 
-
-# feed.bouts = fish %>%
-#   filter(Success == "Success") %>%
-#   group_by(Species, Month) %>%
-#   summarise(total.consumed = sum(Consumed),
-#             counts = sum(Consumed > 0, na.rm = TRUE),
-#             average.consumed = total.consumed/counts,
-#             total = n(),
-#             prop = counts/total*100)
-
+#### 4.1 KING PENGUINS ####
 feed.bouts.king = fish %>%
   filter(Success == "Success", Species == "King") %>%
   group_by(Focal.Name, Month) %>%
   summarise(total.consumed = sum(Consumed),
-            feed.bouts = sum(Consumed > 0, na.rm = TRUE),
-            average.consumed = total.consumed/feed.bouts) %>%
+            feed.bouts = sum(Consumed > 0, na.rm = TRUE)) %>%
   tidyr::replace_na(list(average.consumed = 0)) %>%
   group_by(Focal.Name) %>%
-  mutate(cumsum(total.consumed))
+  mutate(cum.consump = cumsum(total.consumed),
+         cum.bouts = cumsum(feed.bouts)) %>%
+  group_by(Month) %>%
+  summarise(avg.cum.consump = mean(cum.consump),
+            avg.cum.consump.se = plotrix::std.error(cum.consump),
+            avg.cum.bouts = mean(cum.bouts),
+            avg.cum.bouts.se = plotrix::std.error(cum.bouts),
+            avg.consumed = mean(total.consumed),
+            avg.consumed.se = plotrix::std.error(total.consumed),
+            avg.bouts = mean(feed.bouts),
+            avg.bouts.se = plotrix::std.error(feed.bouts))
 feed.bouts.king
 
 
-feed.bouts.king %>%
-ggplot(., aes(x = Month, y = prop, group = Species)) +
-  geom_line(stat = "identity", size = 0.8, aes(linetype = Species)) +
+# Cumulative dist.
+king.cum.plot = feed.bouts.king %>%
+  ggplot(.) +
+  geom_line(aes(x = Month, y = avg.cum.consump, group = 1), size = 0.8, colour = "blue") +
+  geom_point(aes(x = Month, y = avg.cum.consump, group = 1), size = 3.0, colour = "blue") +
+  geom_errorbar(aes(x = Month, ymin = avg.cum.consump-avg.cum.consump.se, ymax = avg.cum.consump+avg.cum.consump.se),
+                width = 0.2, colour = "blue") +
+  geom_line(aes(x = Month, y = avg.cum.bouts*5, group = 1), size = 0.8, linetype = "dotted", colour = "red") +
+  geom_point(aes(x = Month, y = avg.cum.bouts*5, group = 1), size = 3.0, colour = "red") +
+  geom_errorbar(aes(x = Month, ymin = (avg.cum.bouts-avg.cum.bouts.se)*5, ymax = (avg.cum.bouts+avg.cum.bouts.se)*5),
+                width = 0.2, colour = "red") +
   theme_minimal() +
   xlab('Month') +
-  ylab('Occurrence (%)') +
-  ggtitle("The relative occurrence of swim-feed bouts observed in King and Northern Rockhopper penguins.") +
-  theme(legend.position = "bottom")
+  scale_y_continuous(name = "Mean cumulative consumption", sec.axis = sec_axis(trans=~./5, name="Mean cumulative swim-feed bouts")
+  )
 
-fish.consumed = fish %>%
-  filter(Success == "Success") %>%
-  group_by(Month, Species) %>%
-  summarise(counts = mean(Consumed))
-
-fish.consumed %>%
-  ggplot(., aes(x = Month, y = counts,group = Species)) +
-  geom_line(stat = "identity", size = 0.8, aes(linetype = Species)) +
+# Average dist.
+king.avg.plot = feed.bouts.king %>%
+  ggplot(.) +
+  geom_line(aes(x = Month, y = avg.consumed, group = 1), size = 0.8, colour = "blue") +
+  geom_point(aes(x = Month, y = avg.consumed, group = 1), size = 3.0, colour = "blue") +
+  geom_errorbar(aes(x = Month, ymin = avg.consumed-avg.consumed.se, ymax = avg.consumed+avg.consumed.se),
+                width = 0.2, colour = "blue") +
+  geom_line(aes(x = Month, y = avg.bouts*8, group = 1), size = 0.8, linetype = "dotted", colour = "red") +
+  geom_point(aes(x = Month, y = avg.bouts*8, group = 1), size = 3.0, colour = "red") +
+  geom_errorbar(aes(x = Month, ymin = (avg.bouts-avg.bouts.se)*8, ymax = (avg.bouts+avg.bouts.se)*8),
+                width = 0.2, colour = "red") +
   theme_minimal() +
   xlab('Month') +
-  ylab('Average # of fish consumed') +
-  ggtitle("The average number of capelins consumed by swimming King and Northern Rockhopper penguins.") +
-  theme(legend.position = "bottom")
+  scale_y_continuous(name = "Mean consumption", sec.axis = sec_axis(trans=~./8, name="Mean swim-feed bouts")
+  )
 
+ggarrange(
+  king.cum.plot, king.avg.plot,
+  labels = c("A", "B"), ncol = 1
+)
+
+
+#### 4.2 NORTHERN ROCKHOPPER ####
+feed.bouts.nr = fish %>%
+  filter(Success == "Success", Species == "NRH") %>%
+  group_by(Focal.Name, Month) %>%
+  summarise(total.consumed = sum(Consumed),
+            feed.bouts = sum(Consumed > 0, na.rm = TRUE)) %>%
+  tidyr::replace_na(list(average.consumed = 0)) %>%
+  group_by(Focal.Name) %>%
+  mutate(cum.consump = cumsum(total.consumed),
+         cum.bouts = cumsum(feed.bouts)) %>%
+  group_by(Month) %>%
+  summarise(avg.cum.consump = mean(cum.consump),
+            avg.cum.bouts = mean(cum.bouts),
+            avg.consumed = mean(total.consumed),
+            avg.bouts = mean(feed.bouts))
+feed.bouts.nr
+
+
+# Cumulative dist.
+nr.cum.plot = feed.bouts.nr %>%
+  ggplot(.) +
+  geom_line(aes(x = Month, y = avg.cum.consump, group = 1), size = 0.8, colour = "blue") +
+  geom_point(aes(x = Month, y = avg.cum.consump, group = 1), size = 3.0, colour = "blue") +
+  geom_line(aes(x = Month, y = avg.cum.bouts*5, group = 1), size = 0.8, linetype = "dotted", colour = "red") +
+  geom_point(aes(x = Month, y = avg.cum.bouts*5, group = 1), size = 3.0, colour = "red") +
+  theme_minimal() +
+  xlab('Month') +
+  scale_y_continuous(name = "Mean cumulative consumption", sec.axis = sec_axis(trans=~./5, name="Mean cumulative swim-feed bouts")
+  )
+
+# Average dist.
+nr.avg.plot = feed.bouts.nr %>%
+  ggplot(.) +
+  geom_line(aes(x = Month, y = avg.consumed, group = 1), size = 0.8, colour = "blue") +
+  geom_point(aes(x = Month, y = avg.consumed, group = 1), size = 3.0, colour = "blue") +
+  geom_line(aes(x = Month, y = avg.bouts*5, group = 1), size = 0.8, linetype = "dotted", colour = "red") +
+  geom_point(aes(x = Month, y = avg.bouts*5, group = 1), size = 3.0, colour = "red") +
+  theme_minimal() +
+  xlab('Month') +
+  scale_y_continuous(name = "Mean consumption", sec.axis = sec_axis(trans=~./5, name="Mean swim-feed bouts")
+  )
+
+ggarrange(
+  nr.cum.plot, nr.avg.plot,
+  labels = c("A", "B"), ncol = 1
+)
 
 ####5. Plumage score ####
 plum = read.csv('plumage-score.csv')
