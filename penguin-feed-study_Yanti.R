@@ -69,10 +69,19 @@ bl.summary.prop = bl.summary %>%
   dplyr::mutate(Sleeping = Sleeping/Total*100,
                 Preening = Preening/Total*100,
                 Standing = Standing/Total*100,
-                Lying = Lying/Total*100) %>%
-  select(!Total)
+                Lying = Lying/Total*100,
+                Treatment = "BL") %>%
+    group_by(Species) %>%
+    summarise(sleep = mean(Sleeping),
+              preen = mean(Preening),
+              stand = mean(Standing),
+              lie = mean(Lying),
+              sleep.se = plotrix::std.error(Sleeping, na.rm = T),
+              preen.se = plotrix::std.error(Preening),
+              stand.se = plotrix::std.error(Standing),
+              lie.se = plotrix::std.error(Lying),
+              treatment = first(Treatment))
 
-bl.summary.prop = melt(bl.summary.prop, variable.name = "Behaviour", value.name = "Prop", id.var = c("Species"))
 
 # Baseline data, occurrence % by counts of behaviours > 1% occurrence.
 ggplot(bl.summary.prop, aes(x = Behaviour, y = Prop, fill = Species)) +
@@ -108,7 +117,7 @@ locomotion.data = new.data %>%
   filter(Locomotion != "")
 
 loc.data = locomotion.data %>%
-  group_by(Species) %>%
+  group_by(Species, Focal.Name) %>%
   dplyr::summarise(Sleeping = sum(Locomotion == "Sleeping"),
                    Lying = sum(Locomotion == "Lying"),
                    Standing = sum(Locomotion == "Standing"))
@@ -124,31 +133,51 @@ behaviour.data = new.data %>%
   filter(Behaviours != "", Behaviours != "Pooping")
 
 behav.data = behaviour.data %>%
-  group_by(Species) %>%
-  dplyr::summarise(Preening = sum(Behaviours == "Preening"))
+  group_by(Species, Focal.Name) %>%
+  dplyr::summarise(Preening = sum(Behaviours == "Preening")) %>%
+  ungroup() %>%
+  add_row(Species = "King", Focal.Name = "Gretel", Preening = 0, .before = 8)
 
-merged.data = cbind(loc.data, behav.data$Preening)
-merged.data$Preening = merged.data$`behav.data$Preening`
-
-merged.data = merged.data %>%
-  group_by(Species) %>%
-  dplyr::mutate(Total = sum(Sleeping, Lying, Standing, Preening))
+merged.data = loc.data
+merged.data$Preening = as.numeric(behav.data[, 3])
 
 merged.data = merged.data %>%
-  dplyr::summarise(Sleeping = Sleeping/Total*100,
-                   Preening = Preening/Total*100,
-                   Standing = Standing/Total*100,
-                   Lying = Lying/Total*100) %>%
-  melt(., variable.name = "Behaviour", id.var = c("Species"), value.name = "Prop")
+  mutate(Treatment = "treatment") %>%
+  group_by(Species) %>%
+  dplyr::summarise(sleep = mean(Sleeping),
+                   preen = mean(Preening),
+                   stand = mean(Standing),
+                   lie = mean(Lying),
+                   sleep.se = plotrix::std.error(Sleeping, na.rm = T),
+                   preen.se = plotrix::std.error(Preening),
+                   stand.se = plotrix::std.error(Standing),
+                   lie.se = plotrix::std.error(Lying),
+                   treatment = first(Treatment)) %>%
+  rbind(bl.summary.prop)
+
+merged.data.means = merged.data %>%
+  select(Species, sleep, preen, stand, lie, treatment) %>%
+  tidyr::pivot_longer(cols = (sleep:lie), names_to = "behaviour", values_to = "mean" )
+
+merged.data.se = merged.data %>%
+  select(Species, sleep.se, preen.se, stand.se, lie.se, treatment) %>%
+  tidyr::pivot_longer(cols = (sleep.se:lie.se), names_to = "behaviour", values_to = "se" ) %>%
+  tidyr::replace_na(list(se = 0))
+
+merged.data.means$se = merged.data.se$se
+
 
 # Trial data, occurrence % by counts of behaviours > 1% occurrence.
-ggplot(merged.data, aes(x = Behaviour, y = Prop, fill = Species)) +
+ggplot(merged.data.means, aes(x = behaviour, y = mean, fill = treatment)) +
   geom_bar(stat = "identity", position = position_dodge(), colour = "black") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.2,
+                position=position_dodge(.9)) +
   theme_minimal() +
-  xlab('Behaviour') +
-  ylab('Time spent (%)') +
-  ggtitle("Trial data") +
-  theme(legend.position = "bottom")
+  facet_grid(.~Species) +
+  xlab('Behaviours') +
+  ylab('Counts') +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("red", "blue"))
 
 ####2.3 activity budget comparison####
 names(bl)
@@ -160,7 +189,7 @@ bl2 = bl  %>%
   select(Focal.Name, Behaviours, Species, Month, Date)
 
 behav.d2 = behaviour.data %>%
-  select(Focal.Name, Behaviours, Species, Month, Date)
+  select(Focal.Name, Behaviours, Species, Month, DateTime)
 
 ####3. BCS analysis ####
 bcs = read.csv("PG-Study-Subjects.csv")
@@ -176,65 +205,86 @@ bcs = bcs %>%
                 Plumage = as.factor(PLUMAGE),
                 Success = ifelse(Name %in% c("Pierre", "Gloria", "Hansel", "Patricia", "Brix",
                                                    "Aidan", "Arlo"), "Success", "Fail"),
-                Month = month(Date, label = TRUE)) %>%
-  select(Date, Species, Name, Gender, Weight, BCS, Plumage, Month, Success)
+                Month = month(Date, label = TRUE),
+                Month.index = month(Date, label = FALSE),
+                Month.no = ifelse(Month %in% c("Jan", "Feb", "Mar"), Month.index+5, Month.index - 7),
+                Treatment = ifelse(Month %in% c("Aug", "Sep", "Oct"), "Baseline", "Treatment"))
 
-bcs = bcs %>%
-  mutate(Month.index = month(Date, label = FALSE),
-         Month.no = ifelse(Month %in% c("Jan", "Feb", "Mar"), Month.index+5, Month.index - 7))
-
-w = bcs %>%
-  group_by(Success, Month, Species) %>%
+bl.vs.t = bcs %>%
+  group_by(Treatment, Species) %>%
   dplyr::summarise(mean.w = mean(Weight),
-                sd.w = sd(Weight),
+                   sd.w = plotrix::std.error(Weight),
+                   lower.w = mean.w - sd.w,
+                   higher.w = mean.w + sd.w,
+                   mean.bcs = mean(BCS),
+                   sd.bcs = plotrix::std.error(BCS),
+                   lower.bcs = mean.bcs-sd.bcs,
+                   higher.bcs = mean.bcs + sd.bcs) %>%
+  replace(is.na(.), 0)
+
+# bl vs treatment of all penguin weights
+ggarrange(
+  bl.vs.t %>%
+  filter(Species == "King penguin") %>%
+  ggplot() +
+  geom_point(aes(x = Species, y = mean.w, colour = Treatment), size = 2, position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(x = Species, ymin = lower.w, ymax = higher.w, colour = Treatment),
+                size = 0.75, width = 0.3, position = position_dodge(width = 0.9)) +
+  theme_minimal() +
+  xlab(' ') +
+  ylab('Weight') +
+  theme(legend.position = "none") +
+  scale_colour_manual(values = c("red", "blue"))
+,
+bl.vs.t %>%
+  filter(Species == "Gentoo penguin") %>%
+  ggplot() +
+  geom_point(aes(x = Species, y = mean.w, colour = Treatment), size = 2, position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(x = Species, ymin = lower.w, ymax = higher.w, colour = Treatment),
+                size = 0.75, width = 0.3, position = position_dodge(width = 0.9)) +
+  theme_minimal() +
+  xlab(' ') +
+  ylab(' ') +
+  theme(legend.position = "none")+
+  scale_colour_manual(values = c("red", "blue"))
+,
+bl.vs.t %>%
+  filter(Species == "Northen Rockhopper penguin") %>%
+  ggplot() +
+  geom_point(aes(x = Species, y = mean.w, colour = Treatment), size = 2, position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(x = Species, ymin = lower.w, ymax = higher.w, colour = Treatment),
+                size = 0.75, width = 0.3, position = position_dodge(width = 0.9)) +
+  theme_minimal() +
+  xlab(' ') +
+  ylab(' ') +
+  theme(legend.position = "none")+
+  scale_colour_manual(values = c("red", "blue"))
+, legend = "none", common.legend = T, ncol = 3)
+
+# bl vs treat for only king penguins, further differentiated by those that swim and those that don't.
+w = bcs %>%
+  group_by(Treatment, Success, Species) %>%
+  dplyr::summarise(mean.w = mean(Weight),
+                sd.w = plotrix::std.error(Weight),
                 lower.w = mean.w - sd.w,
                 higher.w = mean.w + sd.w,
                 mean.bcs = mean(BCS),
-                sd.bcs = sd(BCS),
+                sd.bcs = plotrix::std.error(BCS),
                 lower.bcs = mean.bcs-sd.bcs,
                 higher.bcs = mean.bcs + sd.bcs) %>%
   replace(is.na(.), 0)
 
-w %>% filter(Species == "King penguin", Success == "Success") %>%
+w %>% filter(Species == "King penguin") %>%
 ggplot() +
-  geom_point(aes(x = Month, y = mean.w), size = 2) +
-  geom_errorbar(aes(x = Month, ymin = lower.w, ymax = higher.w), size = 0.75, width = 0.3)+
+  geom_point(aes(x = Success, y = mean.w, colour = Success), size = 2, position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(x = Success, ymin = lower.w, ymax = higher.w, colour = Success),
+                size = 0.75, width = 0.3, position = position_dodge(width = 0.9))+
   theme_minimal() +
-  xlab('Date') +
-  ylab('Average weight') +
-  ggtitle('King penguins that fed while swimming') +
-  scale_x_discrete(limits = c("Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"))
-
-w %>% filter(Species == "King penguin", Success == "Fail") %>%
-  ggplot() +
-  geom_point(aes(x = Month, y = mean.w), size = 2) +
-  geom_errorbar(aes(x = Month, ymin = lower.w, ymax = higher.w), size = 0.75, width = 0.3)+
-  theme_minimal() +
-  xlab('Date') +
-  ylab('Average weight') +
-  ggtitle('King penguins that do not feed while swimming') +
-  scale_x_discrete(limits = c("Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"))
-
-w %>% filter(Species == "Gentoo penguin") %>%
-  ggplot() +
-  geom_point(aes(x = Month, y = mean.w), size = 2) +
-  geom_errorbar(aes(x = Month, ymin = lower.w, ymax = higher.w), size = 0.75, width = 0.3)+
-  theme_minimal() +
-  xlab('Date') +
-  ylab('Average weight') +
-  ggtitle('Gentoo penguins that do not feed while swimming')+
-  scale_x_discrete(limits = c("Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"))
-
-
-w %>% filter(Species == "Northen Rockhopper penguin") %>%
-  ggplot() +
-  geom_point(aes(x = Month, y = mean.w), size = 2) +
-  geom_line(aes(x = Month, y = mean.w, group = Species)) +
-  theme_minimal() +
-  xlab('Date') +
-  ylab('Average weight') +
-  ggtitle('Northern Rockhopper penguin that feeds while swimming') +
-  scale_x_discrete(limits = c("Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"))
+  facet_grid(.~Treatment) +
+  scale_colour_manual(values = c("red", "blue")) +
+  theme(legend.position = "none") +
+  ylab("Weight") +
+  xlab(" ")
 
 ####3.1 Linear regression ####
 # Can't do linear regression because unequal sample sizes across species.
@@ -287,7 +337,7 @@ bcs %>%
 ####4. Fish consumption rate ####
 fish = read.csv("fish-consumption.csv")
 fish$Date = fish[,1]
-fish$Date = as.POSIXct(fish$Date, format = "%m/%d/%Y")
+fish$Date = as.POSIXct(fish$Date, format = "%d/%m/%y")
 fish[,1] = NULL
 fish[is.na(fish)] = 0
 fish = melt(fish, variable.name = 'Focal.Name', value.name = "Consumed", id.vars = c("Date")) %>%
@@ -301,33 +351,35 @@ fish = melt(fish, variable.name = 'Focal.Name', value.name = "Consumed", id.vars
 fish = fish %>%
   dplyr::mutate(Month = factor(Month, levels = c("Nov", "Dec", "Jan", "Feb", "Mar")))
 
-fish.lm0 = fish %>%
-  filter(Success == "Success") %>%
-  lmer(Consumed~1 + (1|Focal.Name),
-       data = .)
 
-fish.lm1 = fish %>%
-  filter(Success == "Success") %>%
-  lmer(Consumed~ Week + (1|Focal.Name),
-       data = .)
+# feed.bouts = fish %>%
+#   filter(Success == "Success") %>%
+#   group_by(Species, Month) %>%
+#   summarise(total.consumed = sum(Consumed),
+#             counts = sum(Consumed > 0, na.rm = TRUE),
+#             average.consumed = total.consumed/counts,
+#             total = n(),
+#             prop = counts/total*100)
 
-fish.bouts = fish %>%
-  filter(Success == "Success") %>%
-  group_by(Species, Month) %>%
+feed.bouts.king = fish %>%
+  filter(Success == "Success", Species == "King") %>%
+  group_by(Focal.Name, Month) %>%
   summarise(total.consumed = sum(Consumed),
-            counts = sum(Consumed > 0, na.rm = TRUE),
-            average.consumed = total.consumed/counts,
-            total = n(),
-            prop = counts/total*100)
+            feed.bouts = sum(Consumed > 0, na.rm = TRUE),
+            average.consumed = total.consumed/feed.bouts) %>%
+  tidyr::replace_na(list(average.consumed = 0)) %>%
+  group_by(Focal.Name) %>%
+  mutate(cumsum(total.consumed))
+feed.bouts.king
 
 
-fish.bouts %>%
-ggplot(., aes(x = Month, y = prop,group = Species)) +
+feed.bouts.king %>%
+ggplot(., aes(x = Month, y = prop, group = Species)) +
   geom_line(stat = "identity", size = 0.8, aes(linetype = Species)) +
   theme_minimal() +
   xlab('Month') +
   ylab('Occurrence (%)') +
-  ggtitle("The relative presence of swim-feed bouts observed in King and Northern Rockhopper penguins.") +
+  ggtitle("The relative occurrence of swim-feed bouts observed in King and Northern Rockhopper penguins.") +
   theme(legend.position = "bottom")
 
 fish.consumed = fish %>%
@@ -348,22 +400,34 @@ fish.consumed %>%
 ####5. Plumage score ####
 plum = read.csv('plumage-score.csv')
 plum$Date = as.POSIXct(plum$Date, format = "%m/%d/%Y")
-
-plum = melt(plum, variable.name = "Focal.Name", value.name = "Score", id.vars = c("Date"))
-
 plum = plum %>%
   group_by(Name) %>%
   mutate(Month = month(Date, label = TRUE),
-         Species = ifelse(Name %in% c("Blue", "Yellow", "Purple"), "Gentoo",
-                          ifelse(Name %in% c("Pierre"), "NRH", "King")),
+         Species = as.factor(ifelse(Name %in% c("Blue", "Yellow", "Purple"), "Gentoo",
+                          ifelse(Name %in% c("Pierre"), "NRH", "King"))),
          Success = ifelse(Name %in% c("Pierre", "Gloria", "Hansel", "Patricia", "Brix",
-                                            "Aidan", "Arlo"), "Success", "Fail")) %>%
+                                            "Aidan", "Arlo"), "Success", "Fail"),
+         Treatment = ifelse(Month %in% c("Aug", "Sep", "Oct"), "Baseline", "Treatment")) %>%
   filter(Score > 0)
 
 plum.summary = plum %>%
-  group_by(Success, Species, Month) %>%
-  summarise(mean = mean(Score))
+  group_by(Treatment, Success, Species) %>%
+  summarise(mean = mean(Score),
+            se = plotrix::std.error(Score))
 
+plum.summary %>%
+  filter(Species == "King") %>%
+ggplot() +
+  geom_point(aes(x = Treatment, y = mean, colour = Success), size = 2, position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(x = Treatment, ymin = mean-se, ymax = mean+se, colour = Success),
+                size = 0.75, width = 0.3, position = position_dodge(width = 0.9))+
+  theme_minimal() +
+  scale_colour_manual(values = c("red", "blue")) +
+  theme(legend.position = "none") +
+  ylab("Plumage score") +
+  xlab(" ")
+
+# month by month examination; requires re-mutation of the month variable
 ggarrange(
 plum.summary %>%
   filter(Success == "Success") %>%
